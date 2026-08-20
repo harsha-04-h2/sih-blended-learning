@@ -1,5 +1,5 @@
 # System Architecture
-## AI Teacher Platform — SIH 2025
+## AI Teacher Platform — SIH 2025 (Supabase Stack)
 
 ---
 
@@ -10,22 +10,18 @@
 │                     CLIENT LAYER                         │
 │   React.js Frontend (Student / Teacher / Parent views)   │
 └─────────────────┬───────────────────────────────────────┘
-                  │ HTTPS / REST / WebSocket
-┌─────────────────▼───────────────────────────────────────┐
-│                     API LAYER                            │
-│           Node.js + Express (REST API)                   │
-│   Auth Middleware → Route Handlers → Service Layer       │
-└────┬──────────────┬────────────────┬────────────────────┘
-     │              │                │
-┌────▼────┐   ┌─────▼─────┐   ┌─────▼──────────────────┐
-│ PostgreSQL│  │  MongoDB  │   │     AI Engine Layer     │
-│ (users,  │  │ (sessions,│   │  (Python FastAPI svc)   │
-│ scores,  │  │  logs,    │   │                         │
-│ content) │  │  doubts)  │   │  - LLM API calls        │
-└─────────┘   └───────────┘   │  - Quiz generation      │
-                               │  - Risk scoring         │
-                               │  - Personalization      │
-                               └─────────────────────────┘
+                  │
+        ┌─────────┴──────────┐
+        │                    │
+┌───────▼────────┐   ┌───────▼────────────────────────────┐
+│  Supabase      │   │         AI Engine                   │
+│                │   │   (Python FastAPI — hosted on        │
+│  - PostgreSQL  │   │    Render / Railway)                 │
+│  - Auth        │   │                                      │
+│  - Storage     │   │  - AI Avatar (OpenAI/Gemini)         │
+│  - Realtime    │   │  - Quiz Generation                   │
+│  - Edge Funcs  │   │  - Risk Detection                    │
+└────────────────┘   └────────────────────────────────────┘
 ```
 
 ---
@@ -33,243 +29,232 @@
 ## 2. Tech Stack
 
 ### Frontend
-| Layer | Technology | Why |
-|---|---|---|
-| Framework | React.js (Vite) | Fast, component-based, great ecosystem |
-| Styling | Tailwind CSS | Rapid UI, consistent design |
-| Charts | Recharts or Chart.js | Easy performance graphs |
-| State | Zustand or Redux Toolkit | Global state (user, session) |
-| Routing | React Router v6 | Multi-page SPA |
-| HTTP | Axios | API calls |
-| Voice Input | Web Speech API | Built into browser, no extra cost |
-
-### Backend
-| Layer | Technology | Why |
-|---|---|---|
-| Runtime | Node.js 20 | JS full-stack, fast prototyping |
-| Framework | Express.js | Minimal, flexible REST API |
-| Auth | JWT + bcrypt | Stateless, secure |
-| ORM | Prisma | Type-safe DB queries |
-| Validation | Zod | Input validation |
-| WebSocket | Socket.io | Real-time dashboard updates |
-
-### AI Engine (separate Python service)
-| Layer | Technology | Why |
-|---|---|---|
-| Framework | FastAPI | Fast async Python API |
-| LLM | OpenAI GPT-4o / Gemini 1.5 Flash | AI avatar, quiz gen |
-| Embeddings | OpenAI text-embedding-3-small | Semantic search on content |
-| Vector DB | Pinecone (free tier) or Chroma | Content retrieval for AI |
-| ML | scikit-learn | Risk scoring model |
-
-### Database
-| DB | Use Case |
+| Layer | Technology |
 |---|---|
-| PostgreSQL | Users, scores, courses, quizzes, alerts |
-| MongoDB | Chat/doubt logs, AI session history, activity streams |
-| Redis (optional) | Session cache, rate limiting |
+| Framework | React.js (Vite) |
+| Styling | Tailwind CSS |
+| Charts | Recharts |
+| State | Zustand |
+| Routing | React Router v6 |
+| Backend Client | Supabase JS SDK (`@supabase/supabase-js`) |
+| HTTP (AI only) | Axios |
 
-### Infrastructure
+### Backend — Supabase (no server needed)
+| Feature | Supabase Tool |
+|---|---|
+| Database | PostgreSQL (via Supabase dashboard) |
+| Auth | Supabase Auth (email/password + magic link) |
+| File Storage | Supabase Storage (PDFs, videos) |
+| Realtime updates | Supabase Realtime (teacher dashboard live updates) |
+| Server-side logic | Supabase Edge Functions (Deno) |
+| Row-level security | Supabase RLS policies |
+
+### AI Engine (separate service)
+| Layer | Technology |
+|---|---|
+| Framework | Python FastAPI |
+| LLM | OpenAI GPT-4o-mini or Gemini 1.5 Flash |
+| Hosting | Render (free tier) |
+
+### Hosting
 | Service | Tool |
 |---|---|
-| Frontend hosting | Vercel (free) |
-| Backend hosting | Railway or Render (free tier) |
-| AI service | Render or Hugging Face Spaces |
-| File storage | Cloudinary (PDFs, images) or Supabase Storage |
-| Auth provider | Firebase Auth (optional, simplifies auth) |
+| Frontend | Vercel (free) |
+| AI Engine | Render (free) |
+| Database + Auth | Supabase (free tier) |
 
 ---
 
-## 3. AI Avatar — How It Works
+## 3. Supabase Setup
 
-```
-Student types/speaks a question
-        │
-        ▼
-Voice → Text (Web Speech API)
-        │
-        ▼
-Backend receives question + context:
-  { question, studentId, currentTopic, level }
-        │
-        ▼
-AI Engine builds prompt:
-  System: "You are an AI teacher. Student is in Class 9, 
-           studying Chapter 3: Photosynthesis. Level: Beginner."
-  User: "What is chlorophyll?"
-        │
-        ▼
-GPT-4o / Gemini responds
-        │
-        ▼
-Response sent to frontend
-Log doubt to MongoDB (for teacher dashboard)
-        │
-        ▼
-Text → Speech (browser TTS or ElevenLabs)
+### Auth
+- Use Supabase Auth built-in
+- After signup, insert a row into `profiles` table with the user's role
+- Use `supabase.auth.signUp()` and `supabase.auth.signInWithPassword()`
+
+### Row Level Security (RLS) — Critical
+Enable RLS on every table. Example policies:
+
+```sql
+-- Students can only read their own data
+CREATE POLICY "student_own_data" ON students
+FOR SELECT USING (auth.uid() = user_id);
+
+-- Teachers can read all students in their class
+CREATE POLICY "teacher_read_class" ON students
+FOR SELECT USING (
+  EXISTS (
+    SELECT 1 FROM class_enrollments ce
+    JOIN classes c ON c.id = ce.class_id
+    WHERE ce.student_id = students.id
+    AND c.teacher_id = (SELECT id FROM teachers WHERE user_id = auth.uid())
+  )
+);
 ```
 
 ---
 
-## 4. Personalization Engine — How It Works
+## 4. Supabase JS SDK — Usage Patterns
 
-```
-Student completes placement quiz
-        │
-        ▼
-Score calculated → Level assigned (Beginner/Intermediate/Advanced)
-        │
-        ▼
-Learning path generated from content DB
-(filtered by level, sorted by prerequisite order)
-        │
-        ▼
-Student completes module → Quiz taken → Score recorded
-        │
-        ▼
-Performance model checks:
-  - Last 3 quiz scores
-  - Time spent per module
-  - Number of doubts asked
-        │
-   ┌────┴────┐
-   │         │
-Struggling  Excelling
-   │         │
-Serve easier  Serve harder
-content next  content next
+### Init (one file, import everywhere)
+```js
+// src/lib/supabase.js
+import { createClient } from '@supabase/supabase-js'
+
+export const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+)
 ```
 
----
+### Auth
+```js
+// Sign up
+const { data, error } = await supabase.auth.signUp({
+  email: 'student@school.edu',
+  password: 'password123',
+  options: { data: { name: 'Rahul', role: 'student' } }
+})
 
-## 5. Risk Detection Logic
+// Login
+const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
-```python
-def calculate_risk_score(student):
-    score = 0
-    
-    # Quiz performance
-    last_3_quizzes = get_last_n_quizzes(student.id, 3)
-    avg_score = mean([q.score for q in last_3_quizzes])
-    if avg_score < 40:
-        score += 40
-    
-    # Declining trend
-    if is_declining_trend(last_3_quizzes):
-        score += 25
-    
-    # Attendance
-    attendance = get_attendance_rate(student.id, days=30)
-    if attendance < 0.75:
-        score += 20
-    
-    # Login inactivity
-    days_inactive = days_since_last_login(student.id)
-    if days_inactive > 5:
-        score += 15
-    
-    return score  # 0-100; >50 = at risk
+// Get current user
+const { data: { user } } = await supabase.auth.getUser()
+
+// Logout
+await supabase.auth.signOut()
 ```
 
-Risk levels:
-- 0–30 → Green (on track)
-- 31–60 → Amber (watch)
-- 61–100 → Red (alert teacher)
+### Querying the DB
+```js
+// Get student's modules
+const { data, error } = await supabase
+  .from('modules')
+  .select('*, student_module_progress(*)')
+  .eq('course_id', courseId)
+  .order('order_index')
 
----
+// Submit quiz attempt
+const { data, error } = await supabase
+  .from('quiz_attempts')
+  .insert({ student_id: user.id, quiz_id: quizId, score: 80, answers: answersJson })
 
-## 6. API Structure
-
+// Get risk alerts for teacher
+const { data, error } = await supabase
+  .from('risk_alerts')
+  .select('*, students(*, users(name))')
+  .eq('is_resolved', false)
+  .order('created_at', { ascending: false })
 ```
-/api/v1/
-  auth/
-    POST /register
-    POST /login
-    POST /refresh-token
 
-  student/
-    GET  /profile
-    GET  /learning-path
-    GET  /progress
-    POST /complete-module/:moduleId
+### Realtime (teacher dashboard)
+```js
+supabase
+  .channel('risk_alerts')
+  .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'risk_alerts' }, (payload) => {
+    // Update UI with new alert
+  })
+  .subscribe()
+```
 
-  quiz/
-    GET  /generate/:topicId        ← AI-generated
-    POST /submit/:quizId
-    GET  /results/:quizId
+### File Storage
+```js
+// Upload PDF
+const { data, error } = await supabase.storage
+  .from('course-content')
+  .upload(`modules/${moduleId}/notes.pdf`, file)
 
-  avatar/
-    POST /ask                      ← AI avatar endpoint
-
-  teacher/
-    GET  /dashboard
-    GET  /students
-    GET  /risk-alerts
-    PATCH /risk-alerts/:alertId
-    GET  /doubt-logs
-
-  parent/
-    GET  /child-summary
-    GET  /child-progress/:studentId
+// Get public URL
+const { data } = supabase.storage
+  .from('course-content')
+  .getPublicUrl(`modules/${moduleId}/notes.pdf`)
 ```
 
 ---
 
-## 7. Folder Structure
+## 5. AI Engine Integration
+
+### Via Supabase Edge Function (recommended — hides OpenAI key)
+```ts
+// supabase/functions/ask-avatar/index.ts
+import { serve } from 'https://deno.land/std/http/server.ts'
+
+serve(async (req) => {
+  const { question, context } = await req.json()
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${Deno.env.get('OPENAI_API_KEY')}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: `You are an AI teacher. Topic: ${context.topic}. Level: ${context.level}.` },
+        { role: 'user', content: question }
+      ]
+    })
+  })
+  const data = await response.json()
+  return new Response(
+    JSON.stringify({ answer: data.choices[0].message.content }),
+    { headers: { 'Content-Type': 'application/json' } }
+  )
+})
+```
+
+Call it from frontend:
+```js
+const { data, error } = await supabase.functions.invoke('ask-avatar', {
+  body: { question, context }
+})
+```
+
+---
+
+## 6. Folder Structure
 
 ```
 sih-ai-teacher/
 │
-├── frontend/                    # React app
+├── frontend/
 │   ├── src/
+│   │   ├── lib/
+│   │   │   └── supabase.js        # Supabase client — single source of truth
 │   │   ├── pages/
 │   │   │   ├── student/
-│   │   │   │   ├── Dashboard.jsx
-│   │   │   │   ├── LearningPath.jsx
-│   │   │   │   ├── Quiz.jsx
-│   │   │   │   └── Avatar.jsx
 │   │   │   ├── teacher/
-│   │   │   │   ├── Dashboard.jsx
-│   │   │   │   ├── Students.jsx
-│   │   │   │   └── RiskAlerts.jsx
 │   │   │   └── parent/
-│   │   │       └── Dashboard.jsx
 │   │   ├── components/
 │   │   ├── hooks/
-│   │   ├── store/               # Zustand store
-│   │   └── api/                 # Axios calls
+│   │   │   ├── useAuth.js
+│   │   │   └── useRealtime.js
+│   │   ├── store/                 # Zustand (auth state only)
+│   │   └── api/
+│   │       └── avatar.js          # Edge function calls
 │   └── package.json
 │
-├── backend/                     # Node.js API
-│   ├── src/
-│   │   ├── routes/
-│   │   ├── controllers/
-│   │   ├── services/
-│   │   ├── middleware/
-│   │   ├── models/              # Prisma schema
-│   │   └── utils/
-│   ├── prisma/
-│   │   └── schema.prisma
-│   └── package.json
-│
-├── ai-engine/                   # Python AI service
-│   ├── main.py                  # FastAPI app
-│   ├── routes/
-│   │   ├── avatar.py
-│   │   ├── quiz_gen.py
-│   │   └── risk.py
-│   ├── services/
-│   │   ├── llm.py
-│   │   └── personalization.py
-│   └── requirements.txt
+├── supabase/
+│   ├── migrations/
+│   │   └── 001_initial_schema.sql # All tables from DATABASE_SCHEMA.md
+│   └── functions/
+│       └── ask-avatar/
+│           └── index.ts
 │
 ├── docs/
-│   ├── PRD.md
-│   ├── ARCHITECTURE.md
-│   ├── DATABASE_SCHEMA.md
-│   └── API_SPEC.md
-│
 ├── .env.example
-├── .gitignore
+├── CURSOR_RULES.md
 └── README.md
 ```
+
+---
+
+## 7. Environment Variables
+
+```
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Both are safe to expose in the frontend — RLS policies protect the data.
