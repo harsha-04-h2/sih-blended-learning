@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  student
+  teacher
+  parent
+  admin
+}
+
+enum Level {
+  beginner
+  intermediate
+  advanced
+}
+
+enum AlertType {
+  low_score
+  inactivity
+  declining_trend
+  low_attendance
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+  student      Student?
+  teacher      Teacher?
+}
+
+model Student {
+  id                      String    @id @default(uuid())
+  userId                  String    @unique
+  user                    User      @relation(fields: [userId], references: [id])
+  level                   Level     @default(beginner)
+  placementDone           Boolean   @default(false)
+  assessmentCompleted     Boolean   @default(false)
+  reportGenerated         Boolean   @default(false)
+  learningPathGenerated   Boolean   @default(false)
+  currentTopicId          String?
+  streakDays              Int       @default(0)
+  lastActive              DateTime?
+  enrollments             ClassEnrollment[]
+  quizAttempts            QuizAttempt[]
+  riskAlerts              RiskAlert[]
+  moduleProgress          StudentModuleProgress[]
+  learningPaths           LearningPath[]
+}
+
+model Teacher {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  subject   String?
+  classes   Class[]
+}
+
+model Class {
+  id          String   @id @default(uuid())
+  name        String
+  teacherId   String
+  teacher     Teacher  @relation(fields: [teacherId], references: [id])
+  enrollments ClassEnrollment[]
+  courses     Course[]
+}
+
+model ClassEnrollment {
+  id        String   @id @default(uuid())
+  studentId String
+  classId   String
+  student   Student  @relation(fields: [studentId], references: [id])
+  class     Class    @relation(fields: [classId], references: [id])
+  joinedAt  DateTime @default(now())
+}
+
+model Course {
+  id        String   @id @default(uuid())
+  title     String
+  subject   String
+  classId   String
+  class     Class    @relation(fields: [classId], references: [id])
+  modules   Module[]
+}
+
+model Module {
+  id          String   @id @default(uuid())
+  courseId    String
+  course      Course   @relation(fields: [courseId], references: [id])
+  title       String
+  description String?
+  level       Level
+  videoUrl    String?
+  notesText   String?
+  orderIndex  Int
+  quizzes     Quiz[]
+  progress    StudentModuleProgress[]
+}
+
+model StudentModuleProgress {
+  id             String    @id @default(uuid())
+  studentId      String
+  moduleId       String
+  student        Student   @relation(fields: [studentId], references: [id])
+  module         Module    @relation(fields: [moduleId], references: [id])
+  status         String    @default("not_started")
+  completedAt    DateTime?
+  timeSpentSecs  Int       @default(0)
+}
+
+model Quiz {
+  id            String         @id @default(uuid())
+  moduleId      String?
+  module        Module?        @relation(fields: [moduleId], references: [id])
+  title         String
+  isPlacement   Boolean        @default(false)
+  isAiGenerated Boolean        @default(false)
+  timerSeconds  Int            @default(600)
+  questions     QuizQuestion[]
+  attempts      QuizAttempt[]
+}
+
+model QuizQuestion {
+  id           String @id @default(uuid())
+  quizId       String
+  quiz         Quiz   @relation(fields: [quizId], references: [id])
+  questionText String
+  type         String
+  difficulty   String
+  options      String // Using String for SQLite/JSON, let's keep it simple.
+  explanation  String?
+  orderIndex   Int
+}
+
+model QuizAttempt {
+  id            String   @id @default(uuid())
+  studentId     String
+  quizId        String
+  student       Student  @relation(fields: [studentId], references: [id])
+  quiz          Quiz     @relation(fields: [quizId], references: [id])
+  score         Float
+  totalQuestions Int
+  correctCount  Int
+  completedAt   DateTime @default(now())
+  answers       String // Using string instead of JSON for cross-db compatibility
+  aiReport      String? // Stores the AI generated analysis report
+}
+
+model RiskAlert {
+  id         String    @id @default(uuid())
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id])
+  type       AlertType
+  severity   String
+  message    String
+  isResolved Boolean   @default(false)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model LearningPath {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id])
+  status      String   @default("in_progress") // in_progress, completed
+  createdAt   DateTime @default(now())
+  topics      LearningPathTopic[]
+}
+
+model LearningPathTopic {
+  id             String       @id @default(uuid())
+  learningPathId String
+  learningPath   LearningPath @relation(fields: [learningPathId], references: [id], onDelete: Cascade)
+  topicName      String
+  priority       Int
+  status         String       @default("not_started") // not_started, in_progress, mastered, partially_mastered, not_mastered
+  reason         String?
+  sessions       TopicSession[]
+}
+
+model TopicSession {
+  id                  String             @id @default(uuid())
+  learningPathTopicId String
+  learningPathTopic   LearningPathTopic  @relation(fields: [learningPathTopicId], references: [id], onDelete: Cascade)
+  lessonContent       String             // JSON string of the generated lesson
+  quizQuestions       String             // JSON string of the 5 generated questions
+  quizScore           Float?             // Store percentage after quiz evaluation
+  masteryLevel        String?            // "Mastered", "Partially Mastered", "Not Mastered"
+  isRemediation       Boolean            @default(false)
+  isRevision          Boolean            @default(false)
+  createdAt           DateTime           @default(now())
+}
